@@ -46,6 +46,7 @@ header{
 .chip{background:rgba(216,27,122,.14);border:1px solid rgba(216,27,122,.35);color:#f472b6;padding:5px 13px;border-radius:20px;font-size:11px;font-weight:500}
 .btn{padding:7px 15px;border-radius:7px;border:none;cursor:pointer;font-family:'Inter',sans-serif;font-weight:600;font-size:12px;transition:all .2s}
 .btn-p{background:var(--pink);color:#fff}.btn-p:hover{background:var(--pink-l)}
+.btn-g{background:var(--green);color:#fff}.btn-g:hover{background:#178a4f}
 .btn-o{background:transparent;color:#aaa;border:1px solid #3a3a5a}.btn-o:hover{border-color:var(--pink);color:var(--pink)}
 .btn-g{background:var(--bg);color:var(--text2);border:1px solid var(--border)}.btn-g:hover{border-color:#aaa}
 input[type=file]{display:none}
@@ -251,7 +252,10 @@ tbody td{padding:9px 12px;vertical-align:middle;color:var(--text2)}
     </div>
   </div>
   <div class="hright">
-    <div class="chip" id="chip">Sin datos cargados</div>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
+      <span style="font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.7px">Período de datos</span>
+      <div class="chip" id="chip">Sin datos cargados</div>
+    </div>
     <button class="btn btn-o" onclick="document.getElementById('fi').click()">↑ Actualizar Excel</button>
     <div class="pdf-drop-wrap">
       <button class="btn btn-p pdf-drop-btn" onclick="togglePdfMenu(event)">⬇ Descargar PDF ▾</button>
@@ -275,6 +279,13 @@ tbody td{padding:9px 12px;vertical-align:middle;color:var(--text2)}
     <input type="file" id="fi" accept=".xlsx,.xls" onchange="loadFile(event)">
   </div>
 </header>
+<div id="fileInfoBar" style="display:none;background:var(--hdr);border-bottom:1px solid rgba(255,255,255,.07);padding:4px 32px;display:flex;align-items:center;gap:8px" id="fileInfoBar">
+  <span style="font-size:10px;color:#7a7aaa">📄 Fuente:</span>
+  <span id="fileName" style="font-size:10px;color:#aab;font-weight:600"></span>
+  <span style="font-size:10px;color:#555a7a">·</span>
+  <span style="font-size:10px;color:#7a7aaa">Cargado:</span>
+  <span id="fileDate" style="font-size:10px;color:#aab"></span>
+</div>
 
 <!-- ══ UPLOAD ══ -->
 <div id="up">
@@ -409,6 +420,9 @@ tbody td{padding:9px 12px;vertical-align:middle;color:var(--text2)}
       <h3>Detalle de Tickets</h3>
       <div style="display:flex;align-items:center;gap:12px">
         <span class="tcnt" id="tcnt">—</span>
+        <button class="btn btn-g" onclick="exportExcel()" title="Exportar datos del período actual a Excel" style="font-size:11px;padding:6px 12px;display:flex;align-items:center;gap:5px">
+          <span>⬇</span> Exportar Excel
+        </button>
         <select class="pg-size" id="pgSize" onchange="pgSizeChange()">
           <option value="20">20 por página</option>
           <option value="50">50 por página</option>
@@ -467,7 +481,16 @@ const COLORS_BAR    = ['#D81B7A','#2472B3','#1E9E5E','#D4820A','#6C3FC5','#D6303
 /* ── FILE ── */
 function drop(e){e.preventDefault();proc(e.dataTransfer.files[0])}
 function loadFile(e){proc(e.target.files[0])}
+let FILE_META = {name:'', modified:''};
+
 function proc(f){
+  // Capture file metadata
+  FILE_META.name = f.name || '';
+  if(f.lastModified){
+    const d = new Date(f.lastModified);
+    FILE_META.modified = d.toLocaleDateString('es-CL',{day:'2-digit',month:'long',year:'numeric'})
+      + ' ' + d.toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});
+  }
   const r=new FileReader();
   r.onload=e=>{
     const wb=XLSX.read(e.target.result,{type:'binary'});
@@ -495,6 +518,12 @@ function updChip(){
     return da-db;
   });
   if(ds.length) document.getElementById('chip').textContent=ds[0].split(' ')[0]+' → '+ds[ds.length-1].split(' ')[0];
+  // Show file metadata bar
+  if(FILE_META.name){
+    document.getElementById('fileName').textContent=FILE_META.name;
+    document.getElementById('fileDate').textContent=FILE_META.modified||'—';
+    document.getElementById('fileInfoBar').style.display='flex';
+  }
 }
 function fillDD(){
   fd('fEst','Estado');fd('fTip','Tipo ticket');fd('fPri','Prioridad');fd('fAsi','Asignado a');
@@ -1056,31 +1085,58 @@ function downloadPDF() {
   function simpleTable(x, y, colW, rows, rh, fs) {
     rh = rh || 22; fs = fs || 8.5;
     const tw = colW.reduce((a,b) => a+b, 0);
+    const hdrRow = rows[0]; // keep header for page breaks
+    const SAFE_BOT = PH - 30; // bottom safe area (above footer)
+    let curY = y;
+    let rowStart = curY; // track top of current page block for border
+
     rows.forEach((row, ri) => {
       const isH = ri === 0;
       const isT = !isH && String(row[0]||'').trim().toLowerCase() === 'total';
-      const bg  = isH ? '#1F3864' : (isT ? '#F2D7E0' : (ri%2===1 ? '#E8EEF4' : '#FFFFFF'));
-      fillRect(x, y + ri*rh, tw, rh, bg);
 
+      // Page break check (not for header row)
+      if (!isH && curY + rh > SAFE_BOT) {
+        // Close border on current page
+        strokeRect(x, rowStart, tw, curY - rowStart, '#1F3864', 0.8);
+        // New page
+        doc.addPage();
+        fillRect(0, 0, PW, PH, '#F8F9FB');
+        // Repeat header
+        curY = 30;
+        rowStart = curY;
+        fillRect(x, curY, tw, rh, '#1F3864');
+        fillRect(x, curY, tw, 3, '#D81B7A');
+        let hcx = x;
+        hdrRow.forEach((cell, ci) => {
+          txt(hcx+4, curY+rh*0.65, String(cell||''), fs, '#FFFFFF', 'left', true, colW[ci]);
+          if (ci > 0) drawLine(hcx, curY, hcx, curY+rh, '#3A5A8A', 0.3);
+          hcx += colW[ci];
+        });
+        drawLine(x, curY+rh, x+tw, curY+rh, '#3A5A8A', 0.35);
+        curY += rh;
+      }
+
+      const bg = isH ? '#1F3864' : (isT ? '#F2D7E0' : (ri%2===1 ? '#E8EEF4' : '#FFFFFF'));
+      fillRect(x, curY, tw, rh, bg);
       let cx = x;
       row.forEach((cell, ci) => {
-        const s   = String(cell || '');
-        let fc    = isH ? '#FFFFFF' : '#1a1a2e';
-        const bd  = isH || isT;
+        const s = String(cell || '');
+        let fc = isH ? '#FFFFFF' : '#1a1a2e';
+        const bd = isH || isT;
         if (!isH) {
           if (s.includes('Dentro')) fc = '#1E9E5E';
           else if (s.includes('Fuera')) fc = '#D63031';
         }
-        const ty = y + ri*rh + rh*0.65;
-        txt(cx+4, ty, s, fs, fc, 'left', bd, colW[ci]);
-        if (ci > 0) drawLine(cx, y+ri*rh, cx, y+ri*rh+rh, '#C8D8E8', 0.3);
+        txt(cx+4, curY+rh*0.65, s, fs, fc, 'left', bd, colW[ci]);
+        if (ci > 0) drawLine(cx, curY, cx, curY+rh, '#C8D8E8', 0.3);
         cx += colW[ci];
       });
       const sepC = isH ? '#3A5A8A' : '#C8D8E8';
-      drawLine(x, y+(ri+1)*rh, x+tw, y+(ri+1)*rh, sepC, 0.35);
+      drawLine(x, curY+rh, x+tw, curY+rh, sepC, 0.35);
+      curY += rh;
     });
-    strokeRect(x, y, tw, rows.length*rh, '#1F3864', 0.8);
-    return y + rows.length * rh; // returns bottom edge
+    strokeRect(x, rowStart, tw, curY - rowStart, '#1F3864', 0.8);
+    return curY;
   }
 
   // ── Double-header table (grupo + Cantidad/%) ────────────────────────────────
@@ -1407,11 +1463,16 @@ function downloadPDF() {
   y = sectionLbl(LX, y, 'Requerimientos por Prioridad', LX+TW);
   doubleTable(LX, y, DW, GRP, gR.prioRows, 22, 8.5);
   // Componente (derecha)
-  const allComps=['Aplicativos',"API's",'Microservicios','Nifi','Bases de datos','QLIK','OPENSHIFT','Infraestructura','Send Grid','3scale','S3 Bucket','Otro'];
+  // Build from real data — include ALL categories actually in tickets
   const cmR = cntBy(reqs,'Categoria');
+  const allComps=[...new Set([
+    ...Object.keys(cmR),
+    'Aplicativos',"API's",'Microservicios','Nifi','Bases de datos',
+    'QLIK','OPENSHIFT','Infraestructura','Send Grid','3scale','S3 Bucket','Otro'
+  ])].filter(c=>cmR[c]>0 || ['Aplicativos',"API's",'Microservicios','Nifi'].includes(c));
   const compRows = allComps.map(comp => {
     const c=cmR[comp]||0, cp=reqs.filter(t=>t['Categoria']===comp&&/cerrad|exitosa/i.test(t['Estado']||'')).length;
-    return [comp, String(c), reqs.length?pct(c,reqs.length):'0,0%', String(cp), c?pct(cp,c):'0%', String(c-cp), c?pct(c-cp,c):'0,0%'];
+    return [comp, String(c), pct(c,reqs.length), String(cp), c?pct(cp,c):'0%', String(c-cp), c?pct(c-cp,c):'0%'];
   });
   compRows.push(['Total',String(reqs.length),'100%',String(gR.clX),pct(gR.clX,reqs.length),String(gR.peX),pct(gR.peX,reqs.length)]);
   let yR = 62;
@@ -1584,24 +1645,45 @@ function downloadPDFPremium() {
   function TBL(x,y,colW,rows,rh,fs,acol){
     rh=rh||20;fs=fs||9;acol=acol||PINK;
     const tw=colW.reduce((a,b)=>a+b,0);
+    const hdrRow=rows[0];
+    const SAFE_BOT=PH-28;
+    let curY=y, rowStart=curY;
+
     rows.forEach((row,ri)=>{
       const isH=ri===0, isT=!isH&&String(row[0]||'').trim().toLowerCase()==='total';
-      FR(x,y+ri*rh,tw,rh,isH?DARK:(isT?'#EEE8F4':ri%2===1?OFF:WHITE));
-      if(isH)FR(x,y,tw,3,acol);
-      if(isT)FR(x,y+ri*rh,3,rh,acol);
+
+      // Page break (skip for header)
+      if(!isH && curY+rh>SAFE_BOT){
+        SR(x,rowStart,tw,curY-rowStart,LIGHT,0.5);
+        doc.addPage(); WBG();
+        curY=30; rowStart=curY;
+        // Repeat header
+        FR(x,curY,tw,rh,DARK); FR(x,curY,tw,3,acol);
+        let hcx=x;
+        hdrRow.forEach((cell,ci)=>{
+          TX(hcx+5,curY+rh*0.66,String(cell||''),fs,WHITE,'left',true,colW[ci]);
+          if(ci>0)LN(hcx,curY,hcx,curY+rh,LIGHT,0.3); hcx+=colW[ci];
+        });
+        LN(x,curY+rh,x+tw,curY+rh,acol,0.5);
+        curY+=rh;
+      }
+
+      FR(x,curY,tw,rh,isH?DARK:(isT?'#EEE8F4':ri%2===1?OFF:WHITE));
+      if(isH)FR(x,curY,tw,3,acol);
+      if(isT)FR(x,curY,3,rh,acol);
       let cx=x;
       row.forEach((cell,ci)=>{
         const s=String(cell||'');
         let fc=isH?WHITE:(isT?DARK:TEXT2),bd=isH||isT;
         if(!isH&&!isT){if(s.includes('Dentro')){fc=GREEN;bd=true}else if(s.includes('Fuera')){fc=RED;bd=true}}
-        TX(cx+5,y+ri*rh+rh*0.66,s,fs,fc,'left',bd,colW[ci]);
-        if(ci>0)LN(cx,y+ri*rh,cx,y+(ri+1)*rh,LIGHT,0.3);
-        cx+=colW[ci];
+        TX(cx+5,curY+rh*0.66,s,fs,fc,'left',bd,colW[ci]);
+        if(ci>0)LN(cx,curY,cx,curY+rh,LIGHT,0.3); cx+=colW[ci];
       });
-      LN(x,y+(ri+1)*rh,x+tw,y+(ri+1)*rh,isH?acol:LIGHT,isH?0.5:0.3);
+      LN(x,curY+rh,x+tw,curY+rh,isH?acol:LIGHT,isH?0.5:0.3);
+      curY+=rh;
     });
-    SR(x,y,tw,rows.length*rh,LIGHT,0.5);
-    return y+rows.length*rh;
+    SR(x,rowStart,tw,curY-rowStart,LIGHT,0.5);
+    return curY;
   }
 
   // Double-header table — returns bottom Y
@@ -1837,9 +1919,10 @@ function downloadPDFPremium() {
   y5+=14; y5=sLbl(LX,y5,'Requerimientos por Prioridad',LX+TW,PINK);
   DTBL(LX,y5,DW,GRP,gR.prioRows,22,9,PINK);
   let yR5=CONTENT_TOP;
-  const allComps=['Aplicativos',"API's",'Microservicios','Nifi','Bases de datos','QLIK','OPENSHIFT','Infraestructura','Send Grid','3scale','S3 Bucket','Otro'];
+  // Build from real data — include ALL categories actually in tickets
   const cmR=cntBy(reqs,'Categoria');
-  const compRows=allComps.map(comp=>{const c=cmR[comp]||0,cp=reqs.filter(t=>t['Categoria']===comp&&/cerrad|exitosa/i.test(t['Estado']||'')).length;return[comp,String(c),reqs.length?pct(c,reqs.length):'0,0%',String(cp),c?pct(cp,c):'0%',String(c-cp),c?pct(c-cp,c):'0,0%'];});
+  const allComps=[...new Set([...Object.keys(cmR).filter(c=>cmR[c]>0),'Aplicativos',"API's",'Infraestructura'])];
+  const compRows=allComps.map(comp=>{const c=cmR[comp]||0,cp=reqs.filter(t=>t['Categoria']===comp&&/cerrad|exitosa/i.test(t['Estado']||'')).length;return[comp,String(c),pct(c,reqs.length),String(cp),c?pct(cp,c):'0%',String(c-cp),c?pct(c-cp,c):'0%'];});
   compRows.push(['Total',String(reqs.length),'100%',String(gR.clX),pct(gR.clX,reqs.length),String(gR.peX),pct(gR.peX,reqs.length)]);
   yR5=sLbl(RX,yR5,'Requerimientos por componente',PW-M,BLUE);
   DTBL(RX,yR5,DW,GRP,compRows,18,8.5,BLUE);
@@ -1950,6 +2033,58 @@ document.addEventListener('click',function(e){
   const wrap=document.querySelector('.pdf-drop-wrap');
   if(wrap&&!wrap.contains(e.target)) closePdfMenu();
 });
+
+
+/* ── EXPORT EXCEL ── */
+function exportExcel() {
+  if (!FIL.length && !ALL.length) { alert('Primero carga un archivo Excel'); return; }
+  const data = FIL.length ? FIL : ALL;
+  if (!data.length) { alert('No hay datos en el período seleccionado'); return; }
+
+  // Get period string for filename
+  const dates = data.map(t => t['Fec. creación']).filter(Boolean).filter(s => {
+    const p = s.trim().split(/[\s\/]/); return p.length >= 3;
+  }).sort((a,b) => {
+    const pa=a.trim().split(/[\s\/]/), pb=b.trim().split(/[\s\/]/);
+    return new Date(+pa[2],+pa[1]-1,+pa[0]) - new Date(+pb[2],+pb[1]-1,+pb[0]);
+  });
+  const periodoStr = dates.length
+    ? `${dates[0].split(' ')[0]}_al_${dates[dates.length-1].split(' ')[0]}`.replace(/\//g,'-')
+    : 'exportado';
+
+  // Build CSV with BOM for Excel UTF-8 compatibility
+  const cols = ['ID','Tipo ticket','Título','Estado','Prioridad',
+                 'Fec. creación','Fec. resolución','Asignado a',
+                 'Cumple resolución','Cumple respuesta','Categoria',
+                 'F. Ult. Modif.'];
+
+  const esc = v => {
+    const s = String(v == null ? '' : v).replace(/"/g,'""');
+    return s.includes(',') || s.includes('\n') || s.includes('"') ? `"${s}"` : s;
+  };
+
+  const rows = [cols.map(esc).join(',')];
+  data.forEach(t => {
+    rows.push(cols.map(c => esc(t[c] || '')).join(','));
+  });
+
+  // Add summary row
+  rows.push('');
+  rows.push(`"Período:","${dates[0]?.split(' ')[0] || ''} al ${dates[dates.length-1]?.split(' ')[0] || ''}"`);
+  rows.push(`"Total tickets:","${data.length}"`);
+  rows.push(`"Requerimientos:","${data.filter(t=>t['Tipo ticket']==='Requerimiento').length}"`);
+  rows.push(`"Incidentes:","${data.filter(t=>t['Tipo ticket']==='Incidente').length}"`);
+  rows.push(`"Generado:","${new Date().toLocaleString('es-CL')}"`);
+
+  const csv = '\uFEFF' + rows.join('\n'); // BOM for Excel UTF-8
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Tickets_Prodigio_${periodoStr}.csv`;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 200);
+}
 
 </script>
 </body>
