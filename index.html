@@ -279,7 +279,7 @@ tbody td{padding:9px 12px;vertical-align:middle;color:var(--text2)}
     <input type="file" id="fi" accept=".xlsx,.xls" onchange="loadFile(event)">
   </div>
 </header>
-<div id="fileInfoBar" style="display:none;background:var(--hdr);border-bottom:1px solid rgba(255,255,255,.07);padding:4px 32px;display:flex;align-items:center;gap:8px" id="fileInfoBar">
+<div id="fileInfoBar" style="display:none;background:var(--hdr);border-bottom:1px solid rgba(255,255,255,.07);padding:4px 32px;align-items:center;gap:8px">
   <span style="font-size:10px;color:#7a7aaa">📄 Fuente:</span>
   <span id="fileName" style="font-size:10px;color:#aab;font-weight:600"></span>
   <span style="font-size:10px;color:#555a7a">·</span>
@@ -307,6 +307,8 @@ tbody td{padding:9px 12px;vertical-align:middle;color:var(--text2)}
     <div class="kpi g"><div class="klbl">Cerrados</div><div class="kval" id="k1">0</div><div class="ksub" id="k1s">—</div></div>
     <div class="kpi y"><div class="klbl">En Proceso</div><div class="kval" id="k2">0</div><div class="ksub">activos</div></div>
     <div class="kpi r"><div class="klbl">Fuera de SLA</div><div class="kval" id="k3">0</div><div class="ksub" id="k3s">—</div></div>
+    <div class="kpi" style="border-top-color:var(--green)"><div class="klbl">SLA Respuesta</div><div class="kval" id="k6" style="font-size:26px">—</div><div class="ksub" id="k6s">—</div></div>
+    <div class="kpi" id="k7card" style="border-top-color:#1A9DA0"><div class="klbl">SLA Atribuible</div><div class="kval" id="k7" style="font-size:26px;color:#1A9DA0">—</div><div class="ksub" id="k7s">a Prodigio</div></div>
     <div class="kpi"><div class="klbl">Incidentes</div><div class="kval" id="k4">0</div><div class="ksub">detectados</div></div>
     <div class="kpi b"><div class="klbl">Requerimientos</div><div class="kval" id="k5">0</div><div class="ksub">gestionados</div></div>
   </div>
@@ -382,6 +384,12 @@ tbody td{padding:9px 12px;vertical-align:middle;color:var(--text2)}
     </div>
   </div>
 
+  <div class="slabel">Cumplimiento SLA detallado</div>
+  <div class="cgrid3" style="margin-bottom:14px">
+    <div class="card"><div class="card-hdr"><span class="ctitle">SLA Respuesta</span><div class="cnum" id="cn-slaresp">—<small>con SLA</small></div></div><div class="donut-wrap"><canvas id="cSlaResp"></canvas><div class="dc"><div class="dc-n" id="dc-slaresp" style="color:var(--green)">—</div><div class="dc-l">cumplimiento</div></div></div><div class="leg" id="leg-slaresp"></div></div>
+    <div class="card"><div class="card-hdr"><span class="ctitle">SLA Resolución — Atribuible Prodigio</span><div class="cnum" id="cn-slaatrib">—<small>atribuibles</small></div></div><div class="donut-wrap"><canvas id="cSlaAtrib"></canvas><div class="dc"><div class="dc-n" id="dc-slaatrib" style="color:#1A9DA0">—</div><div class="dc-l">cumplimiento</div></div></div><div class="leg" id="leg-slaatrib"></div></div>
+    <div class="card"><div class="card-hdr"><span class="ctitle">Atribución SLA</span><div class="cnum" id="cn-atrib-det">—<small>tickets</small></div></div><div class="pbar-list" id="pbar-atrib" style="margin-top:8px"></div></div>
+  </div>
   <!-- ROW 2: Cumplimiento Estado · Categoría · Asignado -->
   <div class="slabel">Cumplimiento y distribución</div>
   <div class="cgrid3" style="margin-bottom:22px">
@@ -574,6 +582,20 @@ function sr(c){sCol===c?sAsc=!sAsc:(sCol=c,sAsc=true);sd();renderTable()}
 function sd(){FIL.sort((a,b)=>{let va=a[sCol]||'',vb=b[sCol]||'';if(!isNaN(va)&&!isNaN(vb)){va=+va;vb=+vb}return va<vb?(sAsc?-1:1):va>vb?(sAsc?1:-1):0})}
 
 /* ── KPIs ── */
+// ── Abreviaciones de estados ──
+function abrevEst(e){
+  var map={'Ejecución exitosa sin observaciones':'Ejec. exitosa s/obs.','En espera Usuario CEN':'En espera CEN','Certificación CEN':'Certif. CEN','Pruebas UAT CEN':'UAT CEN'};
+  return map[e]||e;
+}
+// ── Atribución SLA ──
+function atribSLA(t){
+  if(t['Atribuible']&&t['Atribuible'].trim()) return t['Atribuible'].trim();
+  if(t['Estado']==='En espera Usuario CEN') return 'No - CEN';
+  var c=(t['Clasificación Cambio']||'').toUpperCase();
+  if(c.indexOf('RFC')>=0||c.indexOf('CAB')>=0) return 'No - RFC/CAB';
+  return 'Sí';
+}
+
 function kpi(){
   const t=FIL,n=t.length;
   const cl=t.filter(x=>/(cerrad|exitosa)/i.test(x['Estado']||'')).length;
@@ -585,6 +607,19 @@ function kpi(){
   s('k0',n);s('k1',cl);s('k2',op);s('k3',sf);s('k4',ic);s('k5',rq);
   document.getElementById('k1s').textContent=n?Math.round(cl/n*100)+'% del total':'—';
   document.getElementById('k3s').textContent=sb?Math.round(sf/sb*100)+'% c/ SLA':'—';
+  // SLA Respuesta
+  const rbT=t.filter(x=>!((x['Cumple respuesta']||'').toLowerCase().includes('sin')));
+  const roT=rbT.filter(x=>(x['Cumple respuesta']||'').toLowerCase().includes('dentro')).length;
+  const spResp=rbT.length?Math.round(roT/rbT.length*100):null;
+  const k6=document.getElementById('k6');
+  if(k6){if(spResp!==null){k6.textContent=spResp+'%';k6.style.color=spResp>=80?'var(--green)':spResp>=50?'var(--yellow)':'var(--red)';document.getElementById('k6s').textContent=roT+' dentro/'+(rbT.length-roT)+' fuera';}else{k6.textContent='—';}}
+  // SLA Atribuible
+  const atrib=t.filter(x=>atribSLA(x)==='Sí');
+  const sbA=atrib.filter(x=>!((x['Cumple resolución']||'').toLowerCase().includes('sin')));
+  const soA=sbA.filter(x=>(x['Cumple resolución']||'').toLowerCase().includes('dentro')).length;
+  const spA=sbA.length?Math.round(soA/sbA.length*100):null;
+  const k7=document.getElementById('k7');
+  if(k7){if(spA!==null){k7.textContent=spA+'%';k7.style.color=spA>=80?'var(--green)':spA>=50?'var(--yellow)':'var(--red)';document.getElementById('k7s').textContent=soA+'/'+(sbA.length)+' · '+(t.length-atrib.length)+' excl.';}else{k7.textContent='—';}}
 }
 function s(id,v){document.getElementById(id).textContent=v}
 function cntBy(f){return FIL.reduce((a,t)=>{const v=t[f]||'Sin dato';a[v]=(a[v]||0)+1;return a},{})}
@@ -614,6 +649,10 @@ function renderCharts(){
   document.getElementById('dc-sla').style.color=sp>=80?'var(--green)':sp>=50?'var(--yellow)':'var(--red)';
   donut('cSla',slaMap,COLORS_SLA,'leg-sla');
 
+  /* 3b. SLA RESPUESTA DONUT */
+  {const m={'Dentro SLA':0,'Fuera SLA':0,'Sin SLA':0};FIL.forEach(t=>{const v=(t['Cumple respuesta']||'').toLowerCase();if(v.includes('dentro'))m['Dentro SLA']++;else if(v.includes('fuera'))m['Fuera SLA']++;else m['Sin SLA']++;});const sb2=m['Dentro SLA']+m['Fuera SLA'],sp2=sb2?Math.round(m['Dentro SLA']/sb2*100):0;s('cn-slaresp',sb2);const dsr=document.getElementById('dc-slaresp');if(dsr){dsr.textContent=sp2+'%';dsr.style.color=sp2>=80?'var(--green)':sp2>=50?'var(--yellow)':'var(--red)';}donut('cSlaResp',m,COLORS_SLA,'leg-slaresp');}
+  /* 3c. SLA ATRIBUIBLE DONUT */
+  {const atT=FIL.filter(x=>atribSLA(x)==='Sí'),noAT=FIL.filter(x=>atribSLA(x)!=='Sí');const m={'Dentro SLA':0,'Fuera SLA':0,'Sin SLA':0};atT.forEach(t=>{const v=(t['Cumple resolución']||'').toLowerCase();if(v.includes('dentro'))m['Dentro SLA']++;else if(v.includes('fuera'))m['Fuera SLA']++;else m['Sin SLA']++;});const sb3=m['Dentro SLA']+m['Fuera SLA'],sp3=sb3?Math.round(m['Dentro SLA']/sb3*100):0;s('cn-slaatrib',atT.length);s('cn-atrib-det',FIL.length);const dsa=document.getElementById('dc-slaatrib');if(dsa){dsa.textContent=sp3+'%';dsa.style.color=sp3>=80?'var(--green)':sp3>=50?'var(--yellow)':'var(--red)';}donut('cSlaAtrib',m,COLORS_SLA,'leg-slaatrib');const atEl=document.getElementById('pbar-atrib');if(atEl){const noR={'RFC/CAB':0,'En espera CEN':0,'Manual':0};noAT.forEach(t=>{const r=atribSLA(t);if(r.includes('RFC'))noR['RFC/CAB']++;else if(r.includes('CEN'))noR['En espera CEN']++;else noR['Manual']++;});const rows=[{l:'Atribuibles',v:atT.length,col:'#1A9DA0'},...Object.entries(noR).filter(([,v])=>v>0).map(([k,v])=>({l:'No: '+k,v,col:'#D63031'}))];atEl.innerHTML=rows.map(r=>{const pv=FIL.length?Math.round(r.v/FIL.length*100):0;return`<div class="pbar-row"><div class="pbar-info"><span class="pbar-label">${r.l}</span><span class="pbar-vals">${r.v}·<strong style="color:${r.col}">${pv}%</strong></span></div><div class="pbar-track"><div class="pbar-fill" style="width:${pv}%;background:${r.col}"></div></div></div>`;}).join('');}}
   /* 4. PROGRESS BARS ESTADO */
   const epctEl=document.getElementById('pbar-estado');
   const barColors=['#1E9E5E','#2472B3','#D4820A','#D63031','#6C3FC5','#888','#D81B7A'];
@@ -622,7 +661,7 @@ function renderCharts(){
   epctEl.innerHTML=estEntries.map(([k,v],i)=>`
     <div class="pbar-row">
       <div class="pbar-info">
-        <span class="pbar-label" title="${k}">${k}</span>
+        <span class="pbar-label" title="${k}">${abrevEst(k)}</span>
         <span class="pbar-vals">${v} · <strong style="color:${barColors[i%barColors.length]}">${n?Math.round(v/n*100):0}%</strong></span>
       </div>
       <div class="pbar-track"><div class="pbar-fill" style="width:${n?Math.round(v/n*100):0}%;background:${barColors[i%barColors.length]}"></div></div>
@@ -1595,7 +1634,7 @@ function downloadPDFPremium() {
         rbR=roR+rfR, rpR=rbR?Math.round(roR/rbR*100):0;
 
   function pct(a,b){return b?`${Math.round(a/b*100)}%`:'0%'}
-  function cntBy(arr,f){return arr.reduce((a,x)=>{const v=x[f]||'Sin dato';a[v]=(a[v]||0)+1;return a},{})}
+  function cntByPDF(arr,f){return arr.reduce((a,x)=>{const v=x[f]||'Sin dato';a[v]=(a[v]||0)+1;return a},{})}
 
   // ── Paleta ──
   const PINK='#D81B7A',DARK='#1F3864',TEAL='#1A9DA0',GOLD='#E8820A',
@@ -1718,7 +1757,7 @@ function downloadPDFPremium() {
 
   function makeGest(list,total){
     const clX=list.filter(t=>/cerrad|exitosa/i.test(t['Estado']||'')).length,peX=total-clX;
-    const pm=cntBy(list,'Prioridad');
+    const pm=cntByPDF(list,'Prioridad');
     const prioRows=['P1 - Crítico','P2 - Alto','P3 - Normal','P4 - Bajo'].map(p=>{
       const c=pm[p]||0,cp=list.filter(t=>t['Prioridad']===p&&/cerrad|exitosa/i.test(t['Estado']||'')).length;
       return[p,String(c),pct(c,total),String(cp),c?pct(cp,c):'0%',String(c-cp),c?pct(c-cp,c):'0%'];
@@ -1779,7 +1818,7 @@ function downloadPDFPremium() {
   FR(M,COL_Y,COL1W,COL_H,OFF);FR(M,COL_Y,3,COL_H,PINK);
   TX(M+10,COL_Y+14,'Distribución por Estado',10,PINK,'left',true);
   LN(M+10,COL_Y+18,M+COL1W-10,COL_Y+18,PINK,0.5);
-  const estMap=cntBy(tickets,'Estado');
+  const estMap=cntByPDF(tickets,'Estado');
   let eyPos=COL_Y+30;
   Object.entries(estMap).sort((a,b)=>b[1]-a[1]).forEach(([est,cnt])=>{
     if(eyPos>COL_BOT-16)return;
@@ -1808,7 +1847,7 @@ function downloadPDFPremium() {
   TX(RX2+10,COL_Y+150,'Tickets por Asignado',10,TEAL,'left',true);
   LN(RX2+10,COL_Y+154,RX2+COL2W-10,COL_Y+154,TEAL,0.5);
   let ayi=0;
-  Object.entries(cntBy(tickets,'Asignado a')).sort((a,b)=>b[1]-a[1]).slice(0,5).forEach(([asi,cnt])=>{
+  Object.entries(cntByPDF(tickets,'Asignado a')).sort((a,b)=>b[1]-a[1]).slice(0,5).forEach(([asi,cnt])=>{
     const pv=n?Math.round(cnt/n*100):0,gy=COL_Y+164+ayi*22;
     if(gy+16>COL_BOT)return;
     TX(RX2+10,gy+10,asi.substring(0,20),9,TEXT2);
@@ -1853,8 +1892,8 @@ function downloadPDFPremium() {
   y3+=14;
   y3=sLbl(M,y3,'Detalle de Tickets del Período',PW-M,TEAL);
   const detCW=[40,70,192,70,62,68,92,70];
-  const detRows=tickets.map(t=>{let id=t['ID']||'';try{id=String(Math.round(parseFloat(id)))}catch(e2){}return[id,t['Tipo ticket']||'—',(t['Título']||'—').substring(0,34),t['Estado']||'—',(t['Fec. creación']||'—').split(' ')[0],(t['F. Ult. Modif.']||'—').split(' ')[0],(t['Asignado a']||'—').substring(0,16),t['Cumple respuesta']||'Sin SLA'];});
-  TBL(M,y3,detCW,[['#','Tipo','Título (Resumen)','Estado','Fec. Creación','Fec. Últ. Modif.','Asignado a','SLA Respuesta'],...detRows],20,8.5,TEAL);
+  const detRows_b1=tickets.map(t=>{let id=t['ID']||'';try{id=String(Math.round(parseFloat(id)))}catch(e2){}return[id,t['Tipo ticket']||'—',(t['Título']||'—').substring(0,34),t['Estado']||'—',(t['Fec. creación']||'—').split(' ')[0],(t['F. Ult. Modif.']||'—').split(' ')[0],(t['Asignado a']||'—').substring(0,16),t['Cumple respuesta']||'Sin SLA'];});
+  TBL(M,y3,detCW,[['#','Tipo','Título (Resumen)','Estado','Fec. Creación','Fec. Últ. Modif.','Asignado a','SLA Respuesta'],...detRows_b1],20,8.5,TEAL);
   pageFtr(TEAL);
 
   // ════ SLIDE 4 — INDICADORES SLA ════════════════════════════
@@ -1873,7 +1912,7 @@ function downloadPDFPremium() {
   TX(KPI4_MID_LBL,KPI4_Y-2,'KPI Requerimientos',10,TEAL,'left',true);
   LN(KPI4_MID_LBL,KPI4_Y+2,PW-M,KPI4_Y+2,TEAL,0.5);
   const KPI4_TBL=KPI4_Y+8;
-  const pmI=cntBy(incs,'Prioridad');
+  const pmI=cntByPDF(incs,'Prioridad');
   const tiempos={'P1 - Crítico':'1:00','P2 - Alto':'8:00','P3 - Normal':'24:00','P4 - Bajo':'48:00'};
   const ventanas={'P1 - Crítico':'24*7','P2 - Alto':'24*7','P3 - Normal':'8*5','P4 - Bajo':'8*5'};
   const pLbls={'P1 - Crítico':'*Crítico','P2 - Alto':'*Alto','P3 - Normal':'*Normal','P4 - Bajo':'*Bajo'};
@@ -1894,20 +1933,215 @@ function downloadPDFPremium() {
     ['P3-Normal (Res.)',`${spR}%`,'8x5',String(sbR),soR?'Dentro SLA':'-',String(sfR)],
     ['P3-Normal (Resp.)',`${rpR}%`,'8x5',String(rbR),roR?'Dentro SLA':'-',String(rfR)]
   ],22,9,TEAL);
-  // SLA comparison bars — below tables
-  const BAR_Y=INC_BOT+18;
-  TX(M,BAR_Y,'Comparativa de Cumplimiento SLA vs Meta',10,DARK,'left',true);
-  LN(M,BAR_Y+4,PW-M,BAR_Y+4,LIGHT,0.5);
-  [[`SLA Resolución Requerimientos`,spR,spR>=80?GREEN:spR>=50?AMBER:RED],[`SLA Respuesta Requerimientos`,rpR,rpR>=80?GREEN:rpR>=50?AMBER:RED]]
-  .forEach(([lbl,pv,c],i)=>{
-    const gy=BAR_Y+18+i*38;
+  // ── Atribución SLA ──────────────────────────────────────
+  function atribSLApdf(t){
+    if(t['Atribuible']&&t['Atribuible'].trim()) return t['Atribuible'].trim();
+    if(t['Estado']==='En espera Usuario CEN') return 'No - En espera CEN';
+    const c=(t['Clasificación Cambio']||'').toUpperCase();
+    if(c.includes('RFC')||c.includes('CAB')) return 'No - RFC/CAB';
+    return 'Sí';
+  }
+  const atribTix=tickets.filter(t=>atribSLApdf(t)==='Sí');
+  const noAtribTix=tickets.filter(t=>atribSLApdf(t)!=='Sí');
+  const sbAt=atribTix.filter(t=>!((t['Cumple resolución']||'').toLowerCase().includes('sin')));
+  const soAt=sbAt.filter(t=>(t['Cumple resolución']||'').toLowerCase().includes('dentro')).length;
+  const spAt=sbAt.length?Math.round(soAt/sbAt.length*100):0;
+  const roAt=atribTix.filter(t=>(t['Cumple respuesta']||'').toLowerCase().includes('dentro')).length;
+  const rfAt=atribTix.filter(t=>(t['Cumple respuesta']||'').toLowerCase().includes('fuera')).length;
+  const rpAt=(roAt+rfAt)?Math.round(roAt/(roAt+rfAt)*100):0;
+
+  pageFtr(PINK);
+
+  // ════ SLIDE 4b — COMPARATIVA SLA + GRILLA TIEMPOS POR ASIGNADO ════
+  doc.addPage(); WBG(); pageHdr('DETALLE SLA — COMPARATIVA Y TIEMPOS POR RESPONSABLE',per,4);
+  let y4b = CONTENT_TOP;
+
+  // ── Barras comparativas Total vs Atribuible ──────────────
+  TX(M,y4b,'Comparativa de Cumplimiento SLA vs Meta',10,DARK,'left',true);
+  LN(M,y4b+4,PW-M,y4b+4,LIGHT,0.5);
+  y4b+=14;
+  [
+    [`SLA Resolución — Total (${n} tickets)`,spR,spR>=80?GREEN:spR>=50?AMBER:RED],
+    [`SLA Respuesta — Total`,rpR,rpR>=80?GREEN:rpR>=50?AMBER:RED],
+  ].forEach(([lbl,pv,c],i)=>{
+    const gy=y4b+i*32;
     TX(M,gy+13,lbl,9.5,TEXT2,'left',true);
-    const bx=M+200,bw=PW-2*M-200-70;
-    FR(bx,gy,bw,20,OFF);
-    if(pv>0)FR(bx,gy,bw*(pv/100),20,c);
-    TX(bx+bw+10,gy+14,`${pv}%`,13,c,'left',true);
-    [80,100].forEach(ref=>{LN(bx+bw*(ref/100),gy-2,bx+bw*(ref/100),gy+22,'#BBBBBB',0.4);TX(bx+bw*(ref/100),gy-4,`${ref}%`,7,'#BBBBBB','center');});
+    const bx=M+230,bw=PW-2*M-230-68;
+    FR(bx,gy,bw,18,OFF);
+    if(pv>0)FR(bx,gy,bw*(pv/100),18,c);
+    TX(bx+bw+8,gy+13,`${pv}%`,13,c,'left',true);
+    [80,100].forEach(ref=>{LN(bx+bw*(ref/100),gy-2,bx+bw*(ref/100),gy+20,'#CCCCCC',0.3);TX(bx+bw*(ref/100),gy-4,`${ref}%`,6,'#CCCCCC','center');});
   });
+  y4b+=74;
+  // Separador y sección atribuible
+  FR(M,y4b,PW-2*M,1,LIGHT);y4b+=8;
+  FR(M,y4b,PW-2*M,18,OFF);FR(M,y4b,4,18,TEAL);
+  TX(M+8,y4b+12,'Solo tickets atribuibles a Prodigio — excluye RFC/CAB y En espera CEN',8.5,TEAL,'left',true);
+  TX(PW-M,y4b+12,`Excluidos: ${noAtribTix.length} — RFC/CAB: ${noAtribTix.filter(t=>atribSLApdf(t).includes('RFC')).length} · En espera CEN: ${noAtribTix.filter(t=>atribSLApdf(t).includes('CEN')).length}`,8,MID,'right');
+  y4b+=24;
+  [
+    [`SLA Resolución — Atribuible Prodigio (${atribTix.length}/${n} tickets)`,spAt,spAt>=80?GREEN:spAt>=50?AMBER:RED],
+    [`SLA Respuesta — Atribuible Prodigio`,rpAt,rpAt>=80?GREEN:rpAt>=50?AMBER:RED],
+  ].forEach(([lbl,pv,c],i)=>{
+    const gy=y4b+i*32;
+    TX(M,gy+13,lbl,9.5,TEXT2,'left',true);
+    const bx=M+230,bw=PW-2*M-230-68;
+    FR(bx,gy,bw,18,OFF);
+    if(pv>0)FR(bx,gy,bw*(pv/100),18,c);
+    TX(bx+bw+8,gy+13,`${pv}%`,13,c,'left',true);
+    [80,100].forEach(ref=>{LN(bx+bw*(ref/100),gy-2,bx+bw*(ref/100),gy+20,'#CCCCCC',0.3);TX(bx+bw*(ref/100),gy-4,`${ref}%`,6,'#CCCCCC','center');});
+  });
+  y4b+=80;
+
+  // ── Grilla: SLA por Responsable (Asignado a) ─────────────
+  TX(M,y4b,'Detalle de SLA por Responsable',10,DARK,'left',true);
+  LN(M,y4b+4,PW-M,y4b+4,LIGHT,0.5);
+  y4b+=14;
+  // Calcular por asignado
+  const asiSet=[...new Set(tickets.map(t=>t['Asignado a']||'Sin asignar'))].sort();
+  const asiRows=asiSet.map(asi=>{
+    const tAsi=tickets.filter(t=>(t['Asignado a']||'Sin asignar')===asi);
+    const tAtrib=tAsi.filter(t=>atribSLApdf(t)==='Sí');
+    const sbRes=tAtrib.filter(t=>!((t['Cumple resolución']||'').toLowerCase().includes('sin')));
+    const soRes=sbRes.filter(t=>(t['Cumple resolución']||'').toLowerCase().includes('dentro')).length;
+    const sfRes=sbRes.length-soRes;
+    const pRes=sbRes.length?Math.round(soRes/sbRes.length*100):0;
+    const sbResp=tAtrib.filter(t=>!((t['Cumple respuesta']||'').toLowerCase().includes('sin')));
+    const soResp=sbResp.filter(t=>(t['Cumple respuesta']||'').toLowerCase().includes('dentro')).length;
+    const sfResp=sbResp.length-soResp;
+    const pResp=sbResp.length?Math.round(soResp/sbResp.length*100):0;
+    const noAt=tAsi.length-tAtrib.length;
+    return[
+      asi.substring(0,22),
+      String(tAsi.length),
+      String(tAtrib.length),
+      noAt>0?String(noAt):'—',
+      sbRes.length?`${soRes}/${sbRes.length}`:'—',
+      sbRes.length?`${pRes}%`:'—',
+      sbResp.length?`${soResp}/${sbResp.length}`:'—',
+      sbResp.length?`${pResp}%`:'—',
+    ];
+  });
+  const asiHdr=['Responsable','Total','Atribuib.','Excluidos','Res. SLA','% Res.','Resp. SLA','% Resp.'];
+  const asiCW=[145,52,58,58,64,52,64,52]; // total=545
+  y4b=TBL(M,y4b,asiCW,[asiHdr,...asiRows],22,9,TEAL);
+  y4b+=14;
+
+  // ── Detalle ticket por responsable ─────────────────────
+  TX(M,y4b,'Tickets por Responsable — detalle individual',10,DARK,'left',true);
+  LN(M,y4b+4,PW-M,y4b+4,LIGHT,0.5);
+  y4b+=14;
+  // Construir filas: por cada asignado, fila resumen + tickets individuales
+  const detHdr=['Responsable','ID','Título','Estado','Atrib.','SLA Resolución','SLA Respuesta'];
+  const detCWResp=[138,46,220,72,52,112,112]; // total=752
+  const detRows=[];
+  asiSet.forEach(asi=>{
+    const tAsi=tickets.filter(t=>(t['Asignado a']||'Sin asignar')===asi);
+    // Fila agrupadora con fondo oscuro (marcada con prefijo §)
+    detRows.push([`§${asi.substring(0,20)}`,`${tAsi.length}tkts`,'','','','','']);
+    tAsi.forEach(t=>{
+      const id=t['ID']?String(Math.round(parseFloat(t['ID']))):'—';
+      const titulo=(t['Título']||'—').substring(0,38);
+      const estado=(t['Estado']||'—').substring(0,14);
+      const atrib=atribSLApdf(t)==='Sí'?'Sí':'No';
+      const slaRes=t['Cumple resolución']||'Sin SLA';
+      const slaResp=t['Cumple respuesta']||'Sin SLA';
+      detRows.push(['  '+id,'',titulo,estado,atrib,slaRes,slaResp]);
+    });
+  });
+  // Tabla con lógica especial: filas § son headers de grupo
+  const detTW=detCWResp.reduce((a,b)=>a+b,0);
+  const SAFE_BOT2=PH-28;
+  let dy=y4b, dRowStart=dy;
+  // Dibujar header
+  FR(M,dy,detTW,22,DARK); FR(M,dy,detTW,3,TEAL);
+  let dcx=M;
+  detHdr.forEach((h,ci)=>{TX(dcx+5,dy+22*0.66,h,9,WHITE,'left',true,detCW[ci]);if(ci>0)LN(dcx,dy,dcx,dy+22,LIGHT,0.3);dcx+=detCW[ci];});
+  LN(M,dy+22,M+detTW,dy+22,TEAL,0.5);
+  dy+=22; dRowStart=dy;
+
+  detRows.forEach((row,ri)=>{
+    const isGrp=String(row[0]).startsWith('§');
+    // Page break
+    if(dy+20>SAFE_BOT2){
+      SR(M,dRowStart,detTW,dy-dRowStart,LIGHT,0.5);
+      doc.addPage(); WBG();
+      dy=30; dRowStart=dy;
+      // Repeat header
+      FR(M,dy,detTW,22,DARK); FR(M,dy,detTW,3,TEAL);
+      let hcx2=M;
+      detHdr.forEach((h,ci)=>{TX(hcx2+5,dy+22*0.66,h,9,WHITE,'left',true,detCW[ci]);if(ci>0)LN(hcx2,dy,hcx2,dy+22,LIGHT,0.3);hcx2+=detCW[ci];});
+      LN(M,dy+22,M+detTW,dy+22,TEAL,0.5);
+      dy+=22; dRowStart=dy;
+    }
+    const rh=isGrp?20:20;
+    FR(M,dy,detTW,rh,isGrp?'#E8EDF8':'#FFFFFF');
+    if(isGrp){FR(M,dy,3,rh,TEAL);}
+    let cx2=M;
+    row.forEach((cell,ci)=>{
+      const s2=isGrp&&ci===0?String(cell).substring(1):String(cell||'');
+      let fc=isGrp?DARK:TEXT2, bd=isGrp&&ci===0;
+      if(!isGrp){
+        if(s2.includes('Dentro')){fc=GREEN;bd=true;}
+        else if(s2.includes('Fuera')){fc=RED;bd=true;}
+        else if(s2==='Sí'){fc=TEAL;bd=true;}
+        else if(s2==='No'){fc=AMBER;bd=true;}
+      }
+      if(isGrp&&ci===1){fc=TEAL;bd=true;}
+      TX(cx2+5,dy+rh*0.66,s2,isGrp?9.5:8.5,fc,'left',bd,detCWResp[ci]);
+      if(ci>0)LN(cx2,dy,cx2,dy+rh,LIGHT,0.3);
+      cx2+=detCW[ci];
+    });
+    LN(M,dy+rh,M+detTW,dy+rh,isGrp?TEAL:LIGHT,isGrp?0.4:0.3);
+    dy+=rh;
+  });
+  SR(M,dRowStart,detTW,dy-dRowStart,LIGHT,0.5);
+  pageFtr(PINK);
+
+  // ════ SLIDE 4c — PARTICIPACIÓN POR RESPONSABLE ════════════
+  doc.addPage(); WBG(); pageHdr('PARTICIPACIÓN POR RESPONSABLE',per,4);
+  function parseFecPdf(s){if(!s)return null;const p=s.trim().split(/[\/\s]/);if(p.length>=3){const d=new Date(+p[2],+p[1]-1,+p[0]);return isNaN(d.getTime())?null:d;}return null;}
+  const ASI_COLS2=['D81B7A','1A9DA0','2472B3','1E9E5E','D4820A','6C3FC5','D63031','888888'];
+  function buildAsiData(tipo){
+    const list=[...new Set(tickets.filter(t=>t['Tipo ticket']===tipo).map(t=>t['Asignado a']||'Sin asignar'))].sort();
+    return list.map((asi,i)=>{
+      const tA=tickets.filter(t=>t['Tipo ticket']===tipo&&(t['Asignado a']||'Sin asignar')===asi);
+      const dias=tA.map(t=>{const fc=parseFecPdf(t['Fec. creación']),fr=parseFecPdf(t['Fec. resolución']);if(fc&&fr){const d=Math.round((fr-fc)/864e5);return d>=0?d:null;}return null;}).filter(d=>d!==null);
+      const prom=dias.length?Math.round(dias.reduce((a,b)=>a+b,0)/dias.length):null;
+      return{asi:asi.substring(0,18),total:tA.length,prom,col:ASI_COLS2[i%ASI_COLS2.length]};
+    });
+  }
+  function drawPie2(cx,cy,r,data,title,sub){
+    TX(cx,cy-r-22,title,11,DARK,'center',true);TX(cx,cy-r-9,sub,8,MID,'center');
+    const tot=data.reduce((s,d)=>s+d.total,0);
+    if(!tot){TX(cx,cy,'Sin datos',9,MID,'center');return;}
+    let ang=-Math.PI/2;
+    data.forEach(d=>{
+      const slice=(d.total/tot)*2*Math.PI,segs=Math.max(8,Math.round(slice*24));
+      doc.setFillColor('#'+d.col);
+      for(let s2=0;s2<segs;s2++){const a1=ang+(s2/segs)*slice,a2=ang+((s2+1)/segs)*slice;doc.triangle(cx,cy,cx+r*Math.cos(a1),cy+r*Math.sin(a1),cx+r*Math.cos(a2),cy+r*Math.sin(a2),'F');}
+      if(slice>0.25){const m2=ang+slice/2;TX(cx+r*0.65*Math.cos(m2),cy+r*0.65*Math.sin(m2)+3,`${Math.round(d.total/tot*100)}%`,7.5,WHITE,'center',true);}
+      ang+=slice;
+    });
+    doc.setFillColor(WHITE);doc.circle(cx,cy,r*0.36,'F');
+    TX(cx,cy+3,String(tot),13,DARK,'center',true);TX(cx,cy+13,'tickets',7,MID,'center');
+    data.forEach((d,i)=>{const lrow=Math.floor(i/2),lcol=i%2,lx2=(cx-r)+lcol*(r),ly2=cy+r+14+lrow*14;doc.setFillColor('#'+d.col);doc.rect(lx2,ly2,7,7,'F');TX(lx2+10,ly2+6.5,`${d.asi} ${Math.round(d.total/tot*100)}%`,7,DARK);});
+  }
+  function drawDiasTable(x,y,data,acol){
+    TX(x,y,'Días promedio por ticket',9,DARK,'left',true);LN(x,y+4,x+240,y+4,LIGHT,0.5);
+    TBL(x,y+10,[130,50,60],[['Responsable','Tickets','Prom. días'],...data.map(d=>[d.asi,String(d.total),d.prom!==null?`${d.prom}d`:'—'])],20,9,acol);
+  }
+  const PIE_R2=72,PIE_Y2=CONTENT_TOP+20;
+  LN(PW/2-6,CONTENT_TOP,PW/2-6,PH-30,LIGHT,0.6);
+  const dataR=buildAsiData('Requerimiento'),dataI=buildAsiData('Incidente');
+  const CX_R2=M+(PW/2-6-M)/2;
+  drawPie2(CX_R2,PIE_Y2+PIE_R2+10,PIE_R2,dataR,'Requerimientos','% tickets por responsable');
+  drawDiasTable(M,PIE_Y2+PIE_R2*2+dataR.length*7+44,dataR,PINK);
+  const CX_I2=PW/2+2+(PW-M-PW/2-2)/2;
+  if(dataI.length>0){drawPie2(CX_I2,PIE_Y2+PIE_R2+10,PIE_R2,dataI,'Incidentes','% tickets por responsable');drawDiasTable(PW/2+2,PIE_Y2+PIE_R2*2+dataI.length*7+44,dataI,RED);}
+  else{TX(CX_I2,PIE_Y2+PIE_R2+10,'Sin Incidentes en el período',10,MID,'center');}
+  FR(M,FTR_Y-28,PW-2*M,20,OFF);FR(M,FTR_Y-28,4,20,TEAL);
+  TX(M+8,FTR_Y-15,'Días = Fec. Creación → Fec. Resolución. Sin fecha de resolución excluidos del promedio.',8,TEAL);
   pageFtr(PINK);
 
   // ════ SLIDE 5 — GESTIÓN REQUERIMIENTOS ════════════════════
@@ -1920,7 +2154,7 @@ function downloadPDFPremium() {
   DTBL(LX,y5,DW,GRP,gR.prioRows,22,9,PINK);
   let yR5=CONTENT_TOP;
   // Build from real data — include ALL categories actually in tickets
-  const cmR=cntBy(reqs,'Categoria');
+  const cmR=cntByPDF(reqs,'Categoria');
   const allComps=[...new Set([...Object.keys(cmR).filter(c=>cmR[c]>0),'Aplicativos',"API's",'Infraestructura'])];
   const compRows=allComps.map(comp=>{const c=cmR[comp]||0,cp=reqs.filter(t=>t['Categoria']===comp&&/cerrad|exitosa/i.test(t['Estado']||'')).length;return[comp,String(c),pct(c,reqs.length),String(cp),c?pct(cp,c):'0%',String(c-cp),c?pct(c-cp,c):'0%'];});
   compRows.push(['Total',String(reqs.length),'100%',String(gR.clX),pct(gR.clX,reqs.length),String(gR.peX),pct(gR.peX,reqs.length)]);
